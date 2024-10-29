@@ -8,7 +8,7 @@ pygame.init()
 # Set up the screen dimensions
 WIDTH, HEIGHT = 800, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Cube and Laser Beams Optimized")
+pygame.display.set_caption("Cube and Laser Beams with Undertale Mechanics")
 
 # Set up the clock for FPS
 clock = pygame.time.Clock()
@@ -17,17 +17,21 @@ FPS = 60
 # Define colors
 WHITE = (255, 255, 255)
 RED = (255, 0, 0)
-RED_TRANS = (255, 0, 0, 100)
+ORANGE = (255, 165, 0)
+ORANGE_TRANS = (255, 165, 0, 100)
 BLUE = (0, 0, 255)
+BLUE_TRANS = (0, 0, 255, 100)
+PLAYER_COLOR = (0, 255, 0)  # Green color for the player
 
 # Player properties
 player_size = 50
 player_pos = [WIDTH // 2, HEIGHT // 2]
 player_speed = 5
+player_moving = False  # To track if the player is moving
 
 # Create player surface and mask
 player_surface = pygame.Surface((player_size, player_size))
-player_surface.fill(BLUE)
+player_surface.fill(PLAYER_COLOR)
 player_mask = pygame.mask.from_surface(player_surface)
 player_rect = player_surface.get_rect(topleft=player_pos)
 
@@ -49,16 +53,10 @@ MAX_LASERS = 10
 # Define the Laser class
 class Laser:
     # Pre-create surfaces for warnings and lasers
-    horizontal_warning_surface = pygame.Surface((WIDTH, laser_width), pygame.SRCALPHA)
-    horizontal_warning_surface.fill(RED_TRANS)
-    vertical_warning_surface = pygame.Surface((laser_width, HEIGHT), pygame.SRCALPHA)
-    vertical_warning_surface.fill(RED_TRANS)
-
-    horizontal_active_surface = pygame.Surface((WIDTH, laser_width))
-    horizontal_active_surface.fill(RED)
-    vertical_active_surface = pygame.Surface((laser_width, HEIGHT))
-    vertical_active_surface.fill(RED)
-
+    horizontal_warning_surfaces = {}
+    vertical_warning_surfaces = {}
+    horizontal_active_surfaces = {}
+    vertical_active_surfaces = {}
     diagonal_images = {}
     diagonal_warning_images = {}
 
@@ -70,40 +68,68 @@ class Laser:
         self.move = random.choice([True, False])  # Randomly decide if the laser will move
         self.speed = 2  # Speed of moving lasers
 
+        # Randomly choose laser type: 'red', 'blue', or 'orange'
+        self.laser_type = random.choice(['red', 'blue', 'orange'])
+
+        # Set colors based on laser type
+        if self.laser_type == 'red':
+            self.color = RED
+            self.color_trans = RED + (100,)
+        elif self.laser_type == 'blue':
+            self.color = BLUE
+            self.color_trans = BLUE + (100,)
+        elif self.laser_type == 'orange':
+            self.color = ORANGE
+            self.color_trans = ORANGE + (100,)
+
+        # Initialize surfaces if not already done
+        if self.laser_type not in Laser.horizontal_warning_surfaces:
+            # Horizontal surfaces
+            Laser.horizontal_warning_surfaces[self.laser_type] = pygame.Surface((WIDTH, laser_width), pygame.SRCALPHA)
+            Laser.horizontal_warning_surfaces[self.laser_type].fill(self.color_trans)
+            Laser.horizontal_active_surfaces[self.laser_type] = pygame.Surface((WIDTH, laser_width))
+            Laser.horizontal_active_surfaces[self.laser_type].fill(self.color)
+            # Vertical surfaces
+            Laser.vertical_warning_surfaces[self.laser_type] = pygame.Surface((laser_width, HEIGHT), pygame.SRCALPHA)
+            Laser.vertical_warning_surfaces[self.laser_type].fill(self.color_trans)
+            Laser.vertical_active_surfaces[self.laser_type] = pygame.Surface((laser_width, HEIGHT))
+            Laser.vertical_active_surfaces[self.laser_type].fill(self.color)
+
         if orientation == 'horizontal':
             self.y = random.randint(0, HEIGHT - laser_width)
             self.vx = 0
             self.vy = self.speed if self.move else 0
             self.x = 0
-            self.rect = self.horizontal_warning_surface.get_rect(topleft=(self.x, self.y))
-            self.surface = self.horizontal_warning_surface  # Initialize with warning surface
+            self.surface = Laser.horizontal_warning_surfaces[self.laser_type]
+            self.rect = self.surface.get_rect(topleft=(self.x, self.y))
         elif orientation == 'vertical':
             self.x = random.randint(0, WIDTH - laser_width)
             self.vx = self.speed if self.move else 0
             self.vy = 0
             self.y = 0
-            self.rect = self.vertical_warning_surface.get_rect(topleft=(self.x, self.y))
-            self.surface = self.vertical_warning_surface  # Initialize with warning surface
+            self.surface = Laser.vertical_warning_surfaces[self.laser_type]
+            self.rect = self.surface.get_rect(topleft=(self.x, self.y))
         elif orientation == 'diagonal':
             # For diagonal lasers, pick a random angle (45 or -45 degrees)
             self.angle = random.choice([45, -45])
 
             # Check if images are already created
-            if self.angle not in Laser.diagonal_images:
+            if (self.angle, self.laser_type) not in Laser.diagonal_images:
                 # Create the active laser image
                 length = int(math.hypot(WIDTH, HEIGHT)) * 2
                 base_surface = pygame.Surface((laser_width, length), pygame.SRCALPHA)
-                base_surface.fill(RED)
+                base_surface.fill(self.color)
                 rotated_image = pygame.transform.rotate(base_surface, self.angle)
-                Laser.diagonal_images[self.angle] = rotated_image
+                Laser.diagonal_images[(self.angle, self.laser_type)] = rotated_image
                 # Create the warning image
-                base_surface.fill(RED_TRANS)
+                base_surface.fill(self.color_trans)
                 rotated_warning_image = pygame.transform.rotate(base_surface, self.angle)
-                Laser.diagonal_warning_images[self.angle] = rotated_warning_image
+                Laser.diagonal_warning_images[(self.angle, self.laser_type)] = rotated_warning_image
 
-            self.image = Laser.diagonal_images[self.angle]
-            self.warning_image = Laser.diagonal_warning_images[self.angle]
-            self.rect = self.warning_image.get_rect()
+            self.image = Laser.diagonal_images[(self.angle, self.laser_type)]
+            self.warning_image = Laser.diagonal_warning_images[(self.angle, self.laser_type)]
+            self.surface = self.warning_image
+            self.rect = self.surface.get_rect()
 
             self.vx = self.speed if self.move else 0
             self.vy = self.speed if self.move else 0
@@ -130,9 +156,9 @@ class Laser:
                 self.state = 'active'
                 # Update the surface to active laser
                 if self.orientation == 'horizontal':
-                    self.surface = self.horizontal_active_surface
+                    self.surface = Laser.horizontal_active_surfaces[self.laser_type]
                 elif self.orientation == 'vertical':
-                    self.surface = self.vertical_active_surface
+                    self.surface = Laser.vertical_active_surfaces[self.laser_type]
                 else:
                     self.surface = self.image
         elif self.state == 'active':
@@ -146,13 +172,7 @@ class Laser:
         return False
 
     def draw(self, surface):
-        if self.orientation == 'diagonal':
-            if self.state == 'warning':
-                surface.blit(self.warning_image, self.rect)
-            else:
-                surface.blit(self.image, self.rect)
-        else:
-            surface.blit(self.surface, self.rect)
+        surface.blit(self.surface, self.rect)
 
 # Game loop
 running = True
@@ -161,12 +181,16 @@ while running:
     laser_timer += dt
     difficulty_timer += dt
 
+    player_moving = False  # Reset movement flag
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
 
     # Movement controls
     keys = pygame.key.get_pressed()
+    old_player_pos = player_pos.copy()
+
     if keys[pygame.K_w]:
         player_pos[1] -= player_speed
     if keys[pygame.K_s]:
@@ -175,6 +199,10 @@ while running:
         player_pos[0] -= player_speed
     if keys[pygame.K_d]:
         player_pos[0] += player_speed
+
+    # Check if the player has moved
+    if player_pos != old_player_pos:
+        player_moving = True
 
     # Update player rect
     player_rect.topleft = player_pos
@@ -210,10 +238,22 @@ while running:
                 # Use masks for collision detection
                 offset = (laser.rect.left - player_rect.left, laser.rect.top - player_rect.top)
                 if player_mask.overlap(laser.mask, offset):
-                    running = False  # End the game
+                    # Apply Undertale mechanics
+                    if laser.laser_type == 'blue' and player_moving:
+                        running = False  # Player was moving during blue laser
+                    elif laser.laser_type == 'orange' and not player_moving:
+                        running = False  # Player was stationary during orange laser
+                    elif laser.laser_type == 'red':
+                        running = False  # Red lasers always damage
             else:
                 if player_rect.colliderect(laser.rect):
-                    running = False  # End the game
+                    # Apply Undertale mechanics
+                    if laser.laser_type == 'blue' and player_moving:
+                        running = False  # Player was moving during blue laser
+                    elif laser.laser_type == 'orange' and not player_moving:
+                        running = False  # Player was stationary during orange laser
+                    elif laser.laser_type == 'red':
+                        running = False  # Red lasers always damage
 
     # Drawing everything
     screen.fill(WHITE)

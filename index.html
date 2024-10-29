@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Cube and Laser Beams with Undertale Mechanics</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #FFFFFF;
+        }
+        #gameCanvas {
+            display: block;
+            margin: 0 auto;
+            background-color: #FFFFFF;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <script>
+        // Get the canvas and context
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // Game dimensions
+        let WIDTH = 800;
+        let HEIGHT = 600;
+
+        // Detect mobile devices
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
+        // Adjust canvas size
+        function resizeCanvas() {
+            if (isMobile) {
+                WIDTH = window.innerWidth;
+                HEIGHT = window.innerHeight;
+                canvas.width = WIDTH;
+                canvas.height = HEIGHT;
+            } else {
+                WIDTH = 800;
+                HEIGHT = 600;
+                canvas.width = WIDTH;
+                canvas.height = HEIGHT;
+            }
+        }
+        resizeCanvas();
+
+        // Handle window resize
+        window.addEventListener('resize', resizeCanvas);
+
+        // Define colors
+        const COLORS = {
+            WHITE: '#FFFFFF',
+            RED: '#FF0000',
+            RED_TRANS: 'rgba(255, 0, 0, 0.4)',
+            BLUE: '#0000FF',
+            BLUE_TRANS: 'rgba(0, 0, 255, 0.4)',
+            ORANGE: '#FFA500',
+            ORANGE_TRANS: 'rgba(255, 165, 0, 0.4)',
+            PLAYER: '#00FF00', // Green color for the player
+        };
+
+        // Player properties
+        const playerSize = 50;
+        const playerSpeed = 5;
+        let playerPos = { x: WIDTH / 2 - playerSize / 2, y: HEIGHT / 2 - playerSize / 2 };
+        let playerMoving = false;
+        let touchPos = null; // For touch input
+        let movementQueue = []; // Queue for movement steps
+        let orangeLeewayTimer = 0; // Timer for orange laser leeway
+
+        // Laser properties
+        const laserWidth = 10;
+        const laserWarningTime = 1000; // milliseconds
+        const laserActiveTime = 1000;   // milliseconds
+        let laserInterval = 2000;       // milliseconds
+        let laserTimer = 0;
+        const lasers = [];
+
+        // Difficulty scaling
+        let difficultyTimer = 0;
+        const difficultyInterval = 5000; // Increase difficulty every 5 seconds
+
+        // Maximum number of lasers to prevent overload
+        const MAX_LASERS = 10;
+
+        // Keyboard input
+        const keys = {};
+
+        if (!isMobile) {
+            document.addEventListener('keydown', (e) => {
+                keys[e.key.toLowerCase()] = true;
+            });
+
+            document.addEventListener('keyup', (e) => {
+                keys[e.key.toLowerCase()] = false;
+            });
+        } else {
+            // Touch controls for mobile
+            canvas.addEventListener('touchstart', handleTouch);
+            canvas.addEventListener('touchmove', handleTouch);
+            canvas.addEventListener('touchend', () => {
+                touchPos = null;
+            });
+
+            function handleTouch(e) {
+                e.preventDefault();
+                const rect = canvas.getBoundingClientRect();
+                const touch = e.touches[0];
+                touchPos = {
+                    x: touch.clientX - rect.left,
+                    y: touch.clientY - rect.top,
+                };
+            }
+        }
+
+        // Game loop variables
+        let lastTime = performance.now();
+        let gameOver = false;
+
+        // Laser class
+        class Laser {
+            constructor(orientation) {
+                this.orientation = orientation;
+                this.state = 'warning'; // 'warning' or 'active'
+                this.warningTimer = laserWarningTime;
+                this.activeTimer = laserActiveTime;
+                this.move = Math.random() < 0.5;
+                this.speed = 2;
+                this.laserType = this.getRandomLaserType();
+
+                // Set colors based on laser type
+                if (this.laserType === 'red') {
+                    this.color = COLORS.RED;
+                    this.colorTrans = COLORS.RED_TRANS;
+                } else if (this.laserType === 'blue') {
+                    this.color = COLORS.BLUE;
+                    this.colorTrans = COLORS.BLUE_TRANS;
+                } else if (this.laserType === 'orange') {
+                    this.color = COLORS.ORANGE;
+                    this.colorTrans = COLORS.ORANGE_TRANS;
+                }
+
+                this.vx = 0;
+                this.vy = 0;
+
+                if (orientation === 'horizontal') {
+                    this.y = Math.random() * (HEIGHT - laserWidth);
+                    if (this.move) {
+                        this.vy = Math.random() < 0.5 ? -this.speed : this.speed;
+                    }
+                    this.x = 0;
+                    this.width = WIDTH;
+                    this.height = laserWidth;
+                } else if (orientation === 'vertical') {
+                    this.x = Math.random() * (WIDTH - laserWidth);
+                    if (this.move) {
+                        this.vx = Math.random() < 0.5 ? -this.speed : this.speed;
+                    }
+                    this.y = 0;
+                    this.width = laserWidth;
+                    this.height = HEIGHT;
+                } else if (orientation === 'diagonal') {
+                    this.angle = Math.random() < 0.5 ? 45 : -45;
+                    this.length = Math.hypot(WIDTH, HEIGHT) * 2;
+                    this.vx = this.move ? this.speed : 0;
+                    this.vy = this.move ? this.speed : 0;
+                    if (this.angle === 45) {
+                        this.vy *= -1;
+                        this.x = -WIDTH / 2;
+                        this.y = HEIGHT + HEIGHT / 2;
+                    } else {
+                        this.x = -WIDTH / 2;
+                        this.y = -HEIGHT / 2;
+                    }
+                    this.width = laserWidth;
+                    this.height = this.length;
+                    this.image = this.createLaserImage(this.color, this.angle);
+                    this.warningImage = this.createLaserImage(this.colorTrans, this.angle);
+                }
+            }
+
+            getRandomLaserType() {
+                const types = ['red', 'blue', 'orange'];
+                return types[Math.floor(Math.random() * types.length)];
+            }
+
+            createLaserImage(color, angle) {
+                const offscreenCanvas = document.createElement('canvas');
+                offscreenCanvas.width = this.width;
+                offscreenCanvas.height = this.height;
+                const offscreenCtx = offscreenCanvas.getContext('2d');
+                offscreenCtx.fillStyle = color;
+                offscreenCtx.fillRect(0, 0, this.width, this.height);
+
+                // Rotate the canvas
+                const rotatedCanvas = document.createElement('canvas');
+                rotatedCanvas.width = this.length;
+                rotatedCanvas.height = this.length;
+                const rotatedCtx = rotatedCanvas.getContext('2d');
+                rotatedCtx.translate(rotatedCanvas.width / 2, rotatedCanvas.height / 2);
+                rotatedCtx.rotate((angle * Math.PI) / 180);
+                rotatedCtx.drawImage(offscreenCanvas, -this.width / 2, -this.height / 2);
+
+                return rotatedCanvas;
+            }
+
+            update(dt) {
+                if (this.state === 'warning') {
+                    if (this.move) {
+                        this.x += this.vx;
+                        this.y += this.vy;
+                    }
+                    this.warningTimer -= dt;
+                    if (this.warningTimer <= 0) {
+                        this.state = 'active';
+                    }
+                } else if (this.state === 'active') {
+                    if (this.move) {
+                        this.x += this.vx;
+                        this.y += this.vy;
+                    }
+                    this.activeTimer -= dt;
+                    if (this.activeTimer <= 0) {
+                        return true; // Remove laser
+                    }
+                }
+                return false;
+            }
+
+            draw(ctx) {
+                ctx.save();
+                if (this.orientation === 'diagonal') {
+                    if (this.state === 'warning') {
+                        ctx.drawImage(this.warningImage, this.x, this.y);
+                    } else {
+                        ctx.drawImage(this.image, this.x, this.y);
+                    }
+                } else {
+                    ctx.fillStyle = this.state === 'warning' ? this.colorTrans : this.color;
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                }
+                ctx.restore();
+            }
+
+            checkCollision(playerRect, playerMoving, orangeLeewayTimer) {
+                if (this.orientation === 'diagonal') {
+                    // Simplified collision for diagonal lasers
+                    const laserRect = { x: this.x, y: this.y, width: this.width, height: this.height };
+                    if (this.rectsIntersect(playerRect, laserRect)) {
+                        return this.applyUndertaleMechanics(playerMoving, orangeLeewayTimer);
+                    }
+                } else {
+                    const laserRect = { x: this.x, y: this.y, width: this.width, height: this.height };
+                    if (this.rectsIntersect(playerRect, laserRect)) {
+                        return this.applyUndertaleMechanics(playerMoving, orangeLeewayTimer);
+                    }
+                }
+                return false;
+            }
+
+            applyUndertaleMechanics(playerMoving, orangeLeewayTimer) {
+                if (this.laserType === 'blue' && playerMoving) {
+                    return true; // Player was moving during blue laser
+                } else if (this.laserType === 'orange') {
+                    if (!playerMoving) {
+                        if (orangeLeewayTimer >= 500) {
+                            return true; // Player was stationary too long during orange laser
+                        }
+                    } else {
+                        // Reset the leeway timer if the player moves
+                        orangeLeewayTimer = 0;
+                    }
+                } else if (this.laserType === 'red') {
+                    return true; // Red lasers always damage
+                }
+                return false;
+            }
+
+            rectsIntersect(a, b) {
+                return (
+                    a.x < b.x + b.width &&
+                    a.x + a.width > b.x &&
+                    a.y < b.y + b.height &&
+                    a.y + a.height > b.y
+                );
+            }
+        }
+
+        function updateGame(dt) {
+            if (gameOver) return;
+
+            laserTimer += dt;
+            difficultyTimer += dt;
+
+            // Increase difficulty
+            if (difficultyTimer >= difficultyInterval) {
+                difficultyTimer = 0;
+                if (laserInterval > 500) {
+                    laserInterval -= 200;
+                }
+            }
+
+            // Spawn lasers
+            if (laserTimer >= laserInterval && lasers.length < MAX_LASERS) {
+                laserTimer = 0;
+                const numLasers = Math.floor(Math.random() * 2) + 1;
+                for (let i = 0; i < numLasers; i++) {
+                    const orientation = ['horizontal', 'vertical', 'diagonal'][Math.floor(Math.random() * 3)];
+                    lasers.push(new Laser(orientation));
+                }
+            }
+
+            // Update lasers
+            for (let i = lasers.length - 1; i >= 0; i--) {
+                if (lasers[i].update(dt)) {
+                    lasers.splice(i, 1);
+                }
+            }
+
+            // Update player position
+            const oldPlayerPos = { x: playerPos.x, y: playerPos.y };
+            playerMoving = false;
+
+            // Handle input
+            let moveX = 0;
+            let moveY = 0;
+
+            if (isMobile) {
+                if (touchPos) {
+                    const dx = touchPos.x - (playerPos.x + playerSize / 2);
+                    const dy = touchPos.y - (playerPos.y + playerSize / 2);
+
+                    if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+                        // Move in steps: one axis at a time
+                        if (Math.abs(dx) > Math.abs(dy)) {
+                            moveX = Math.sign(dx) * playerSpeed;
+                        } else {
+                            moveY = Math.sign(dy) * playerSpeed;
+                        }
+                    }
+                }
+            } else {
+                if (keys['w']) {
+                    moveY = -playerSpeed;
+                }
+                if (keys['s']) {
+                    moveY = playerSpeed;
+                }
+                if (keys['a']) {
+                    moveX = -playerSpeed;
+                }
+                if (keys['d']) {
+                    moveX = playerSpeed;
+                }
+
+                // Move in steps: one axis at a time
+                if (moveX !== 0 && moveY !== 0) {
+                    // Prioritize horizontal movement
+                    if (movementQueue.length === 0) {
+                        movementQueue.push({ x: moveX, y: 0 });
+                        movementQueue.push({ x: 0, y: moveY });
+                    }
+                } else if (moveX !== 0 || moveY !== 0) {
+                    movementQueue = [{ x: moveX, y: moveY }];
+                }
+            }
+
+            if (movementQueue.length > 0) {
+                const movement = movementQueue.shift();
+                playerPos.x += movement.x;
+                playerPos.y += movement.y;
+                playerMoving = true;
+            }
+
+            // Keep player on the screen
+            playerPos.x = Math.max(0, Math.min(WIDTH - playerSize, playerPos.x));
+            playerPos.y = Math.max(0, Math.min(HEIGHT - playerSize, playerPos.y));
+
+            // Check if the player has moved
+            if (playerPos.x !== oldPlayerPos.x || playerPos.y !== oldPlayerPos.y) {
+                playerMoving = true;
+            }
+
+            // Update orange laser leeway timer
+            if (playerMoving) {
+                orangeLeewayTimer = 0;
+            } else {
+                orangeLeewayTimer += dt;
+            }
+
+            // Check collisions
+            const playerRect = { x: playerPos.x, y: playerPos.y, width: playerSize, height: playerSize };
+            for (const laser of lasers) {
+                if (laser.state === 'active') {
+                    if (laser.checkCollision(playerRect, playerMoving, orangeLeewayTimer)) {
+                        gameOver = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        function drawGame() {
+            ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+            // Draw player
+            ctx.fillStyle = COLORS.PLAYER;
+            ctx.fillRect(playerPos.x, playerPos.y, playerSize, playerSize);
+
+            // Draw lasers
+            for (const laser of lasers) {
+                laser.draw(ctx);
+            }
+
+            // Game over screen
+            if (gameOver) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+                ctx.fillRect(0, 0, WIDTH, HEIGHT);
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = '48px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('Game Over', WIDTH / 2, HEIGHT / 2);
+                ctx.font = '24px Arial';
+                ctx.fillText('Refresh the page to play again.', WIDTH / 2, HEIGHT / 2 + 40);
+            }
+        }
+
+        function gameLoop(timestamp) {
+            const dt = timestamp - lastTime;
+            lastTime = timestamp;
+
+            updateGame(dt);
+            drawGame();
+
+            if (!gameOver) {
+                requestAnimationFrame(gameLoop);
+            }
+        }
+
+        // Start the game loop
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>

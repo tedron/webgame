@@ -8,7 +8,7 @@ pygame.init()
 # Set up the screen dimensions
 WIDTH, HEIGHT = 800, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Cube and Laser Beams Enhanced")
+pygame.display.set_caption("Cube and Laser Beams Optimized")
 
 # Set up the clock for FPS
 clock = pygame.time.Clock()
@@ -17,6 +17,7 @@ FPS = 60
 # Define colors
 WHITE = (255, 255, 255)
 RED = (255, 0, 0)
+RED_TRANS = (255, 0, 0, 100)
 BLUE = (0, 0, 255)
 
 # Player properties
@@ -28,6 +29,7 @@ player_speed = 5
 player_surface = pygame.Surface((player_size, player_size))
 player_surface.fill(BLUE)
 player_mask = pygame.mask.from_surface(player_surface)
+player_rect = player_surface.get_rect(topleft=player_pos)
 
 # Laser properties
 laser_width = 10
@@ -41,8 +43,25 @@ lasers = []
 difficulty_timer = 0
 difficulty_interval = 5000  # Increase difficulty every 5 seconds
 
+# Maximum number of lasers to prevent overload
+MAX_LASERS = 10
+
 # Define the Laser class
 class Laser:
+    # Pre-create surfaces for warnings and lasers
+    horizontal_warning_surface = pygame.Surface((WIDTH, laser_width), pygame.SRCALPHA)
+    horizontal_warning_surface.fill(RED_TRANS)
+    vertical_warning_surface = pygame.Surface((laser_width, HEIGHT), pygame.SRCALPHA)
+    vertical_warning_surface.fill(RED_TRANS)
+
+    horizontal_active_surface = pygame.Surface((WIDTH, laser_width))
+    horizontal_active_surface.fill(RED)
+    vertical_active_surface = pygame.Surface((laser_width, HEIGHT))
+    vertical_active_surface.fill(RED)
+
+    diagonal_images = {}
+    diagonal_warning_images = {}
+
     def __init__(self, orientation):
         self.orientation = orientation
         self.state = 'warning'  # 'warning' or 'active'
@@ -52,48 +71,47 @@ class Laser:
         self.speed = 2  # Speed of moving lasers
 
         if orientation == 'horizontal':
-            self.x = 0
             self.y = random.randint(0, HEIGHT - laser_width)
-            self.rect = pygame.Rect(0, self.y, WIDTH, laser_width)
             self.vx = 0
-            self.vy = 0
-            if self.move:
-                self.vy = random.choice([-1, 1]) * self.speed  # Move up or down
+            self.vy = self.speed if self.move else 0
+            self.x = 0
+            self.rect = self.horizontal_warning_surface.get_rect(topleft=(self.x, self.y))
+            self.surface = self.horizontal_warning_surface  # Initialize with warning surface
         elif orientation == 'vertical':
             self.x = random.randint(0, WIDTH - laser_width)
-            self.y = 0
-            self.rect = pygame.Rect(self.x, 0, laser_width, HEIGHT)
-            self.vx = 0
+            self.vx = self.speed if self.move else 0
             self.vy = 0
-            if self.move:
-                self.vx = random.choice([-1, 1]) * self.speed  # Move left or right
+            self.y = 0
+            self.rect = self.vertical_warning_surface.get_rect(topleft=(self.x, self.y))
+            self.surface = self.vertical_warning_surface  # Initialize with warning surface
         elif orientation == 'diagonal':
             # For diagonal lasers, pick a random angle (45 or -45 degrees)
             self.angle = random.choice([45, -45])
-            self.length = int(math.hypot(WIDTH, HEIGHT)) * 2  # Ensure laser covers the screen
-            self.image = pygame.Surface((laser_width, self.length), pygame.SRCALPHA)
-            pygame.draw.rect(self.image, RED, (0, 0, laser_width, self.length))
-            self.image_orig = self.image
-            self.image = pygame.transform.rotate(self.image_orig, self.angle)
-            self.rect = self.image.get_rect()
-            # Position the laser such that it covers the screen
+
+            # Check if images are already created
+            if self.angle not in Laser.diagonal_images:
+                # Create the active laser image
+                length = int(math.hypot(WIDTH, HEIGHT)) * 2
+                base_surface = pygame.Surface((laser_width, length), pygame.SRCALPHA)
+                base_surface.fill(RED)
+                rotated_image = pygame.transform.rotate(base_surface, self.angle)
+                Laser.diagonal_images[self.angle] = rotated_image
+                # Create the warning image
+                base_surface.fill(RED_TRANS)
+                rotated_warning_image = pygame.transform.rotate(base_surface, self.angle)
+                Laser.diagonal_warning_images[self.angle] = rotated_warning_image
+
+            self.image = Laser.diagonal_images[self.angle]
+            self.warning_image = Laser.diagonal_warning_images[self.angle]
+            self.rect = self.warning_image.get_rect()
+
+            self.vx = self.speed if self.move else 0
+            self.vy = self.speed if self.move else 0
             if self.angle == 45:
+                self.vy *= -1
                 self.rect.center = (-WIDTH // 2, HEIGHT + HEIGHT // 2)
-                if self.move:
-                    self.vx = self.speed
-                    self.vy = -self.speed
-                else:
-                    self.vx = 0
-                    self.vy = 0
             else:
                 self.rect.center = (-WIDTH // 2, -HEIGHT // 2)
-                if self.move:
-                    self.vx = self.speed
-                    self.vy = self.speed
-                else:
-                    self.vx = 0
-                    self.vy = 0
-            # Create a mask for collision detection
             self.mask = pygame.mask.from_surface(self.image)
         else:
             self.rect = pygame.Rect(0, 0, 0, 0)
@@ -103,9 +121,20 @@ class Laser:
 
     def update(self, dt):
         if self.state == 'warning':
+            # Move the warning if the laser will move
+            if self.move:
+                self.rect.x += self.vx
+                self.rect.y += self.vy
             self.warning_timer -= dt
             if self.warning_timer <= 0:
                 self.state = 'active'
+                # Update the surface to active laser
+                if self.orientation == 'horizontal':
+                    self.surface = self.horizontal_active_surface
+                elif self.orientation == 'vertical':
+                    self.surface = self.vertical_active_surface
+                else:
+                    self.surface = self.image
         elif self.state == 'active':
             self.active_timer -= dt
             if self.active_timer <= 0:
@@ -117,21 +146,13 @@ class Laser:
         return False
 
     def draw(self, surface):
-        if self.state == 'warning':
-            if self.orientation == 'diagonal':
-                s = pygame.Surface(self.image.get_size(), pygame.SRCALPHA)
-                s.blit(self.image, (0, 0))
-                s.fill((255, 0, 0, 100), None, pygame.BLEND_RGBA_MULT)
-                surface.blit(s, self.rect)
+        if self.orientation == 'diagonal':
+            if self.state == 'warning':
+                surface.blit(self.warning_image, self.rect)
             else:
-                s = pygame.Surface((self.rect.width, self.rect.height), pygame.SRCALPHA)
-                s.fill((255, 0, 0, 100))
-                surface.blit(s, self.rect.topleft)
-        elif self.state == 'active':
-            if self.orientation == 'diagonal':
                 surface.blit(self.image, self.rect)
-            else:
-                pygame.draw.rect(surface, RED, self.rect)
+        else:
+            surface.blit(self.surface, self.rect)
 
 # Game loop
 running = True
@@ -155,9 +176,11 @@ while running:
     if keys[pygame.K_d]:
         player_pos[0] += player_speed
 
+    # Update player rect
+    player_rect.topleft = player_pos
+
     # Keep player on the screen
-    player_pos[0] = max(0, min(WIDTH - player_size, player_pos[0]))
-    player_pos[1] = max(0, min(HEIGHT - player_size, player_pos[1]))
+    player_rect.clamp_ip(screen.get_rect())
 
     # Increase difficulty over time
     if difficulty_timer >= difficulty_interval:
@@ -166,9 +189,9 @@ while running:
             laser_interval -= 200  # Decrease interval by 200 ms
 
     # Spawn lasers occasionally
-    if laser_timer >= laser_interval:
+    if laser_timer >= laser_interval and len(lasers) < MAX_LASERS:
         laser_timer = 0
-        num_lasers = random.randint(1, 3)  # Spawn 1 to 3 lasers
+        num_lasers = random.randint(1, 2)  # Limit the number of lasers spawned
         for _ in range(num_lasers):
             orientation = random.choice(['horizontal', 'vertical', 'diagonal'])
             laser = Laser(orientation)
@@ -181,14 +204,12 @@ while running:
             lasers.remove(laser)
 
     # Check for collisions
-    player_rect = pygame.Rect(player_pos[0], player_pos[1], player_size, player_size)
     for laser in lasers:
         if laser.state == 'active':
             if laser.orientation == 'diagonal':
                 # Use masks for collision detection
-                offset = (int(laser.rect.x - player_rect.x), int(laser.rect.y - player_rect.y))
-                overlap = player_mask.overlap(laser.mask, offset)
-                if overlap:
+                offset = (laser.rect.left - player_rect.left, laser.rect.top - player_rect.top)
+                if player_mask.overlap(laser.mask, offset):
                     running = False  # End the game
             else:
                 if player_rect.colliderect(laser.rect):
